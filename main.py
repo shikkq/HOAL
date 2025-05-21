@@ -2,8 +2,11 @@ import asyncio
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.filters import CommandStart, Text
+import os
+from dotenv import load_dotenv
 
-TOKEN = "ТВОЙ_ТОКЕН"
+load_dotenv()  # Загружает переменные из .env файла в окружение
+TOKEN = os.getenv("TOKEN")
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
