@@ -1,9 +1,0 @@
-[build]
-builder = "NIXPACKS"
-nixpacksPlan = "python"
-
-[python]
-installCommand = "pip install -r requirements.txt"
-
-[start]
-cmd = "python main.py"
