@@ -3,20 +3,25 @@ import json
 import hashlib
 import os
 
+from aiohttp import web
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.filters import CommandStart
 from dotenv import load_dotenv
 
+# Загрузка переменных окружения
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
+PORT = int(os.getenv("PORT", 8000))
 
+# Инициализация бота и диспетчера
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
 CACHE_FILE = "callback_cache.json"
-callback_data_map = {}  # id -> (theme) или (theme, subtopic)
+callback_data_map = {}  # id -> тема или [тема, подтема]
 
+# База знаний
 knowledge_base = {
     "аренда жилья": {
         "как безопасно арендовать": {
@@ -37,12 +42,13 @@ knowledge_base = {
             "keywords": ["врач", "записаться", "поликлиника"],
             "answer": "Запись к врачу возможна через Госуслуги или по телефону регистратуры."
         }
-    },
+    }
 }
 
 
+# --- Вспомогательные функции ---
+
 def make_id(text: str) -> str:
-    """Генерируем короткий ID (хеш) из текста"""
     return hashlib.sha256(text.encode()).hexdigest()[:8]
 
 
@@ -61,12 +67,6 @@ def save_cache():
 
 
 def build_cache():
-    """
-    Строим кеш callback_data_map по knowledge_base
-    format:
-      theme_id: theme_name
-      sub_id: [theme_name, subtopic_name]
-    """
     for theme in knowledge_base:
         theme_id = make_id(theme)
         callback_data_map[theme_id] = theme
@@ -79,7 +79,6 @@ def build_cache():
 def create_theme_buttons():
     buttons = []
     for theme_id, value in callback_data_map.items():
-        # value может быть str (тема) или list (тема, подтема)
         if isinstance(value, str):
             buttons.append(
                 InlineKeyboardButton(text=value.title(), callback_data=f"theme:{theme_id}")
@@ -89,10 +88,9 @@ def create_theme_buttons():
 
 def create_subtopic_buttons(theme_id):
     buttons = []
-    value = callback_data_map.get(theme_id)
-    if not value or not isinstance(value, str):
+    theme = callback_data_map.get(theme_id)
+    if not theme or not isinstance(theme, str):
         return buttons
-    theme = value
     for sub in knowledge_base.get(theme, {}):
         sub_id = make_id(theme + sub)
         buttons.append(
@@ -103,12 +101,14 @@ def create_subtopic_buttons(theme_id):
 
 
 async def send_long_text(chat_id: int, text: str, reply_markup=None):
-    MAX_LEN = 4000  # чуть меньше лимита Telegram
+    MAX_LEN = 4000
     parts = [text[i:i + MAX_LEN] for i in range(0, len(text), MAX_LEN)]
     for part in parts:
         await bot.send_message(chat_id, part, reply_markup=reply_markup)
         await asyncio.sleep(0.1)
 
+
+# --- Хендлеры ---
 
 @dp.message(CommandStart())
 async def start(message: types.Message):
@@ -125,26 +125,26 @@ async def callback_handler(callback: types.CallbackQuery):
 
     if data.startswith("theme:"):
         theme_id = data.split(":", 1)[1]
+        theme = callback_data_map.get(theme_id)
+        if not theme:
+            return await callback.answer("Тема не найдена")
         kb = InlineKeyboardMarkup(row_width=1)
         for btn in create_subtopic_buttons(theme_id):
             kb.add(btn)
-        theme_name = callback_data_map.get(theme_id, "Неизвестная тема")
-        await callback.message.edit_text(f"Выбрана тема: {theme_name.title()}\nВыбери вопрос:", reply_markup=kb)
+        await callback.message.edit_text(f"Выбрана тема: {theme.title()}\nВыбери вопрос:", reply_markup=kb)
 
     elif data.startswith("sub:"):
         sub_id = data.split(":", 1)[1]
-        val = callback_data_map.get(sub_id)
-        if not val or not isinstance(val, list):
-            await callback.answer("Ошибка: вопрос не найден", show_alert=True)
-            return
-        theme, subtopic = val
-        answer = knowledge_base.get(theme, {}).get(subtopic, {}).get("answer", "Ответ не найден.")
+        value = callback_data_map.get(sub_id)
+        if not value or not isinstance(value, list):
+            return await callback.answer("Ошибка: вопрос не найден", show_alert=True)
+        theme, sub = value
+        answer = knowledge_base.get(theme, {}).get(sub, {}).get("answer", "Ответ не найден.")
         kb = InlineKeyboardMarkup(row_width=1).add(
             InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_menu")
         )
-        # Удаляем сообщение с кнопками (чтобы не путать) и отправляем длинный текст
         await callback.message.delete()
-        await send_long_text(chat_id, f"🧾 {subtopic.title()}:\n\n{answer}")
+        await send_long_text(chat_id, f"🧾 {sub.title()}:\n\n{answer}")
         await bot.send_message(chat_id, "Вы можете вернуться в меню:", reply_markup=kb)
 
     elif data == "back_to_menu":
@@ -154,16 +154,31 @@ async def callback_handler(callback: types.CallbackQuery):
         await callback.message.edit_text("Выбери тему:", reply_markup=kb)
 
     else:
-        await callback.answer()  # Для закрытия "часиков"
+        await callback.answer()
 
 
-async def main():
+# --- AIOHTTP сервер для /ping ---
+
+async def handle_ping(request):
+    return web.Response(text="OK — I'm alive!")
+
+
+# --- Инициализация ---
+
+app = web.Application()
+app.router.add_get("/", handle_ping)
+app.router.add_get("/ping", handle_ping)
+
+async def on_startup(app):
     load_cache()
-    # Если кеш пустой — создадим и сохраним
     if not callback_data_map:
         build_cache()
-    await dp.start_polling(bot)
+    asyncio.create_task(dp.start_polling(bot))
 
+app.on_startup.append(on_startup)
+
+
+# --- Запуск ---
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    web.run_app(app, port=PORT)
