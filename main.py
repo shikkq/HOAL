@@ -1,7 +1,7 @@
 import asyncio
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from aiogram.filters import CommandStart, Text
+from aiogram.filters import CommandStart  # Text убран
 import os
 from dotenv import load_dotenv
 
@@ -10,8 +10,6 @@ TOKEN = os.getenv("TOKEN")
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
-
-# 👇 СЮДА ДОБАВЛЯЙТЕ ТЕМЫ, ПОДТЕМЫ, КЛЮЧЕВЫЕ СЛОВА И ОТВЕТЫ 👇
 
 knowledge_base = {
     "аренда жилья": {
@@ -34,18 +32,8 @@ knowledge_base = {
             "answer": "Запись к врачу возможна через Госуслуги или по телефону регистратуры."
         }
     },
-    # 🎯 ПРИМЕР ДОБАВЛЕНИЯ НОВОЙ ТЕМЫ:
-    # "работа": {
-    #     "как составить резюме": {
-    #         "keywords": ["резюме", "работа"],
-    #         "answer": "Для хорошего резюме: 1) кратко, 2) по делу, 3) адаптируйте под вакансию."
-    #     }
-    # }
 }
 
-# 👆 ВСЁ ДОБАВЛЯЕТСЯ ТОЛЬКО СЮДА. НИЧЕГО БОЛЬШЕ ТРОГАТЬ НЕ НАДО 👆
-
-# Команда /start
 @dp.message(CommandStart())
 async def start(message: types.Message):
     kb = InlineKeyboardMarkup(
@@ -56,41 +44,41 @@ async def start(message: types.Message):
     )
     await message.answer("Привет! Выбери тему:", reply_markup=kb)
 
-# Показ подтем
-@dp.callback_query(Text(startswith="theme:"))
-async def show_subtopics(callback: types.CallbackQuery):
-    theme = callback.data.split(":")[1]
-    subtopics = knowledge_base[theme]
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=sub.title(), callback_data=f"sub:{theme}:{sub}")]
-            for sub in subtopics
-        ] + [[InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]]
-    )
-    await callback.message.edit_text(f"Выбрана тема: {theme.title()}\nВыбери вопрос:", reply_markup=kb)
+@dp.callback_query()
+async def callback_handler(callback: types.CallbackQuery):
+    data = callback.data or ""
+    
+    if data.startswith("theme:"):
+        theme = data.split(":", 1)[1]
+        subtopics = knowledge_base.get(theme, {})
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=sub.title(), callback_data=f"sub:{theme}:{sub}")]
+                for sub in subtopics
+            ] + [[InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]]
+        )
+        await callback.message.edit_text(f"Выбрана тема: {theme.title()}\nВыбери вопрос:", reply_markup=kb)
+    
+    elif data.startswith("sub:"):
+        _, theme, sub = data.split(":", 2)
+        answer = knowledge_base.get(theme, {}).get(sub, {}).get("answer", "Ответ не найден.")
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_menu")]]
+        )
+        await callback.message.edit_text(f"🧾 {sub.title()}:\n\n{answer}", reply_markup=kb)
+    
+    elif data == "back_to_menu":
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=theme.title(), callback_data=f"theme:{theme}")]
+                for theme in knowledge_base
+            ]
+        )
+        await callback.message.edit_text("Выбери тему:", reply_markup=kb)
+    
+    else:
+        await callback.answer()  # Чтобы не висело "часики"
 
-# Ответ на подтему
-@dp.callback_query(Text(startswith="sub:"))
-async def show_answer(callback: types.CallbackQuery):
-    _, theme, sub = callback.data.split(":", 2)
-    answer = knowledge_base[theme][sub]["answer"]
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[[InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_menu")]]
-    )
-    await callback.message.edit_text(f"🧾 {sub.title()}:\n\n{answer}", reply_markup=kb)
-
-# Назад в меню
-@dp.callback_query(Text("back_to_menu"))
-async def back_to_menu(callback: types.CallbackQuery):
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=theme.title(), callback_data=f"theme:{theme}")]
-            for theme in knowledge_base
-        ]
-    )
-    await callback.message.edit_text("Выбери тему:", reply_markup=kb)
-
-# Запуск бота
 async def main():
     await dp.start_polling(bot)
 
